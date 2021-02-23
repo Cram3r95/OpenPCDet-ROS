@@ -1,4 +1,5 @@
-#! /usr/bin/env python
+#! /usr/bin/env python3.8
+# N.B. Modify here your python interpreter
 
 """
 Created on Thu Aug  6 11:27:43 2020
@@ -36,7 +37,6 @@ from sensor_msgs.msg import PointCloud2, PointField, Image, CameraInfo
 from std_msgs.msg import Float64, Float32, Header, Bool
 from message_filters import TimeSynchronizer, Subscriber, ApproximateTimeSynchronizer
 from sensor_msgs.msg import PointCloud2, PointField
-from jsk_recognition_msgs.msg import BoundingBox, BoundingBoxArray
 from visualization_msgs.msg import MarkerArray, Marker
 from t4ac_msgs.msg import BEV_detection, BEV_detections_list
 
@@ -58,7 +58,6 @@ cfg_root = "/home/robesafe/t4ac_ws/src/t4ac_perception/detection/libraries/OpenP
 
 move_lidar_center = 20 
 threshold = 0.5
-rc = 0.0
 
 image_shape = np.asarray([375, 1242])
 inference_time_list = []
@@ -179,11 +178,6 @@ def xyz_array_to_pointcloud2(points_sum, stamp=None, frame_id=None):
 def anno_to_bev_detections(dt_box_lidar, scores, types, msg):
     """
     """
- 
-    xmax = rc * 10/130
-    xmin = 0
-    ymax = 1.5
-    ymin = -2.0
 
     detected_3D_objects_marker_array = MarkerArray()
 
@@ -229,8 +223,8 @@ def anno_to_bev_detections(dt_box_lidar, scores, types, msg):
                 bev_detection.type = str(int(types[i]))
                 bev_detection.score = scores[i]
 
-                bev_detection.x = x
-                bev_detection.y = y
+                bev_detection.x = float(dt_box_lidar[i][0]) - move_lidar_center
+                bev_detection.y = float(dt_box_lidar[i][1])
                 bev_detection.tl_br = [0,0,0,0] #2D bbox top-left, bottom-right  xy coordinates
                                           # Upper left     Upper right      # Lower left     # Lower right
                 bev_detection.x_corners = [corners_3d[0,0], corners_3d[0,1], corners_3d[0,2], corners_3d[0,3]]
@@ -275,17 +269,21 @@ def rslidar_callback(msg):
     """
 
     frame = msg.header.seq
-    msg_cloud = ros_numpy.point_cloud2.pointcloud2_to_array(msg)
-    np_p = get_xyz_points(msg_cloud, True)
 
-    scores, dt_box_lidar, types, pred_dict = proc_1.run(np_p, calib, frame)
-    anno_to_bev_detections(dt_box_lidar, scores, types, msg)
+    if len(msg.data) > 1000:
+        msg_cloud = ros_numpy.point_cloud2.pointcloud2_to_array(msg)
+        np_p = get_xyz_points(msg_cloud, True)
 
-def rc_callback(msg):
-    """
-    """
-    global rc
-    rc = msg.data
+        scores, dt_box_lidar, types, pred_dict = proc_1.run(np_p, calib, frame)
+        anno_to_bev_detections(dt_box_lidar, scores, types, msg)
+    else:
+        bev_detections_list = BEV_detections_list()
+        bev_detections_list.header.stamp = msg.header.stamp
+        bev_detections_list.header.frame_id = msg.header.frame_id 
+
+        bev_detections_list.bev_detections_list.append([])
+
+        pub_detected_obstacles.publish(bev_detections_list)
                     
 # Classes
 
@@ -457,7 +455,6 @@ if __name__ == "__main__":
     cfg_from_yaml_file(config_path, cfg)
     
     sub_ = rospy.Subscriber(sub_lidar_topic[1], PointCloud2, rslidar_callback, queue_size=1, buff_size=2**24)
-    sub_ = rospy.Subscriber('/control/rc', Float64, rc_callback, queue_size=20)
 
     pub_detected_obstacles = rospy.Publisher('/t4ac/perception/detection/bev_lidar_obstacles', BEV_detections_list, queue_size=5)
     pub_rviz = rospy.Publisher('t4ac/perception/detection/3D_lidar_obstacles_markers', MarkerArray, queue_size=5)
